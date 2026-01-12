@@ -99,14 +99,16 @@ jobs:
           export OBJDUMP="${CLANG_BIN}/llvm-objdump"
           export STRIP="${CLANG_BIN}/llvm-strip"
           
-          make ARCH=arm64 O=out \
-            CROSS_COMPILE=aarch64-linux-android- \
-            CROSS_COMPILE_COMPAT=arm-linux-androideabi- \
-            gki_defconfig vendor/kalama_GKI.config vendor/oplus/kalama_GKI.config vendor/debugfs.config
+          cd KernelSU
+          git add .
+          git commit -m "just a commit"
+          cd ..
+          git add .
+          git commit -m "just a commit"
 
-          make -j2 ARCH=arm64 O=out \
-            CROSS_COMPILE=aarch64-linux-android- \
-            CROSS_COMPILE_COMPAT=arm-linux-androideabi-
+          make ARCH=arm64 O=out gki_defconfig vendor/kalama_GKI.config vendor/oplus/kalama_GKI.config vendor/debugfs.config
+          make -j2 ARCH=arm64 O=out
+          
 
       - name: 准备 AnyKernel3 刷机包
         run: |
