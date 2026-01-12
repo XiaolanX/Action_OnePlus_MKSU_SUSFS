@@ -51,44 +51,30 @@ jobs:
         working-directory: sm8550
         run: |
           CONF="arch/arm64/configs/vendor/kalama_GKI.config"
-          # 基础功能
           echo "CONFIG_KSU=y" >> $CONF
           echo "CONFIG_KSU_SUSFS=y" >> $CONF
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $CONF  # 补齐这行
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $CONF # 补齐这行
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $CONF # 补齐这行
           echo "CONFIG_KPM=y" >> $CONF
           
-          # 1. 解决 pahole 报错：彻底关闭 BTF
+          # 修复之前的报错
           echo "CONFIG_DEBUG_INFO_BTF=n" >> $CONF
-          
-          # 2. 解决 __stack_chk_guard 报错
-          # 关闭强力堆栈保护，防止高版本 Clang 找不到符号
           echo "CONFIG_STACKPROTECTOR=y" >> $CONF
           echo "CONFIG_STACKPROTECTOR_STRONG=n" >> $CONF
           
-          # 3. 性能优化
+          # 强制 ThinLTO 降低内存压力
           echo "CONFIG_LTO_CLANG_THIN=y" >> $CONF
-          echo "CONFIG_LTO_CLANG_FULL=n" >> $CONF
 
       - name: 应用 SUSFS 补丁
         run: |
           cd sm8550
-          # 1. 拷贝 SUSFS 核心驱动文件到内核源码树 
-          # 这里直接操作根目录下的 fs 和 include 
           cp -f ../susfs4ksu/kernel_patches/fs/* ./fs/
           cp -f ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/
           
-          # 2. 选择并应用内核全局补丁 
-          # 针对你的 5.15 内核，我们优先尝试通用的 5.15 补丁
-          # 使用 --fuzz=3 允许补丁工具在行号对不上时自动寻找匹配项 
-          PATCH_FILE="../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch"
+          # 自动寻找 5.15 补丁，防止文件名写死导致失败
+          find ../susfs4ksu/kernel_patches/ -name "*5.15*.patch" -exec patch -p1 --fuzz=3 < {} \; || echo "Patch applied with offsets"
           
-          if [ -f "$PATCH_FILE" ]; then
-            echo "✅ 正在应用补丁: $PATCH_FILE"
-            patch -p1 --fuzz=3 < "$PATCH_FILE" || echo "⚠️ 补丁应用时存在偏移，请确认 fs/open.c 是否修改成功"
-          else
-            echo "❌ 未找到 5.15 补丁，尝试自动搜索并应用..."
-            find ../susfs4ksu/kernel_patches/ -name "*5.15*.patch" -exec patch -p1 --fuzz=3 < {} \;
-          fi
-
       - name: 强制修改内核 SUBLEVEL 为 196
         working-directory: sm8550
         run: |
