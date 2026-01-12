@@ -26,7 +26,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y bc build-essential flex bison lld llvm sed \
-            libssl-dev libelf-dev libncurses-dev binutils-aarch64-linux-gnu curl git zip
+            libssl-dev libelf-dev libncurses-dev binutils-aarch64-linux-gnu curl git zip dwarves
 
       - name: 下载 AOSP Clang (r547379)
         run: |
