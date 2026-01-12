@@ -100,6 +100,8 @@ jobs:
           export STRIP="${CLANG_BIN}/llvm-strip"
           
           cd KernelSU
+          git config --global user.email "2461654161@qq.com"
+          git config --global user.name "XiaolanX"
           git add .
           git commit -m "just a commit"
           cd ..
