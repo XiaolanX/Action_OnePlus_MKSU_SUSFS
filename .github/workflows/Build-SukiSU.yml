@@ -51,15 +51,20 @@ jobs:
         working-directory: sm8550
         run: |
           CONF="arch/arm64/configs/vendor/kalama_GKI.config"
-          # 基础功能开关
+          # 基础功能
           echo "CONFIG_KSU=y" >> $CONF
           echo "CONFIG_KSU_SUSFS=y" >> $CONF
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $CONF
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $CONF
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $CONF
           echo "CONFIG_KPM=y" >> $CONF
           
-          # 核心优化：强制开启 ThinLTO 并关闭 Full LTO
+          # 1. 解决 pahole 报错：彻底关闭 BTF
+          echo "CONFIG_DEBUG_INFO_BTF=n" >> $CONF
+          
+          # 2. 解决 __stack_chk_guard 报错
+          # 关闭强力堆栈保护，防止高版本 Clang 找不到符号
+          echo "CONFIG_STACKPROTECTOR=y" >> $CONF
+          echo "CONFIG_STACKPROTECTOR_STRONG=n" >> $CONF
+          
+          # 3. 性能优化
           echo "CONFIG_LTO_CLANG_THIN=y" >> $CONF
           echo "CONFIG_LTO_CLANG_FULL=n" >> $CONF
 
