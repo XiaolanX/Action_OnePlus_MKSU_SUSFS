@@ -40,6 +40,7 @@ jobs:
           git config --global user.name "XiaolanX"
           # 克隆一加 Aston 源码
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550.git --depth=1 -b sixteen-qpr1 sm8550
+          git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550-modules.git --depth=1 -b sixteen-qpr1 sm8550-modules
           # 克隆 SUSFS 源码
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
 
