@@ -38,11 +38,26 @@ jobs:
         run: |
           git config --global user.email "2461654161@qq.com"
           git config --global user.name "XiaolanX"
-          # 克隆一加 Aston 源码
+          
+          # 1. 克隆主源码
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550.git --depth=1 -b sixteen-qpr1 sm8550
+          
+          # 2. 克隆模块源码 (这就是报错里缺的东西)
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550-modules.git --depth=1 -b sixteen-qpr1 sm8550-modules
-          # 克隆 SUSFS 源码
+          
+          # 3. 克隆 SUSFS
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
+
+          # 4. 【关键修复】创建符号链接，解决 Kconfig 找不到文件的问题
+          # 报错说缺 kernel/oplus_cpu，我们就把模块库里的文件夹链过去
+          cd sm8550
+          ln -s ../sm8550-modules/kernel/oplus_cpu ./kernel/oplus_cpu
+          # 顺便把其他可能缺的也链上，防止后续报错
+          ln -s ../sm8550-modules/drivers/oplus ./drivers/oplus
+          ln -s ../sm8550-modules/include/oplus ./include/oplus
+          
+          # 5. 集成 SukiSU
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
 
       - name: 物理集成 SUSFS 核心文件与 ABI 修复
         working-directory: sm8550
