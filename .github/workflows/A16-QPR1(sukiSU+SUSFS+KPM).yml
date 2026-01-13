@@ -1,4 +1,4 @@
-name: A16-QPR1(sukiSU+SUSFS+KPM)
+name: A16-QPR1-SukiSU-SUSFS-Final
 
 on:
   workflow_dispatch:
@@ -32,121 +32,93 @@ jobs:
         run: |
           mkdir -p $GITHUB_WORKSPACE/toolchains
           cd $GITHUB_WORKSPACE/toolchains
-          rm -rf clang-android16-release
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android16-release clang-android16-release
 
-      - name: 获取源码与补丁
+      - name: 获取源码与准备环境
         run: |
+          git config --global user.email "2461654161@qq.com"
+          git config --global user.name "XiaolanX"
+          # 克隆一加 Aston 源码
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550.git --depth=1 -b sixteen-qpr1 sm8550
-          git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550-modules.git --depth=1 -b sixteen-qpr1 sm8550-modules
-          # 这里建议还是用 master，因为补丁最全
+          # 克隆 SUSFS 源码
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
 
-      - name: 集成 SukiSU-Ultra
+      - name: 物理集成 SUSFS 核心文件与 ABI 修复
         working-directory: sm8550
         run: |
+          # 1. 按照文档建议，物理拷贝文件到内核树
+          cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h ./include/linux/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs.h ./include/linux/
+          
+          # 2. 核心：删除 ABI 保护文件 (防止 A14/A16 WiFi/驱动崩溃重启)
+          rm -f android/abi_gki_protected_exports_aarch64
+          rm -f android/abi_gki_protected_exports_x86_64
+
+      - name: 集成 SukiSU-Ultra (注入钩子)
+        working-directory: sm8550
+        run: |
+          # 只调用一次 setup.sh，它会自动处理 KSU 的钩子注入
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
 
-      - name: 注入内核配置 (KSU/SUSFS/KPM)
+      - name: 注入内核配置 (彻底解决符号与重启问题)
         working-directory: sm8550
         run: |
           CONF="arch/arm64/configs/vendor/kalama_GKI.config"
-          echo "CONFIG_KSU=y" >> $CONF
-          echo "CONFIG_KSU_SUSFS=y" >> $CONF
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $CONF  # 补齐这行
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $CONF # 补齐这行
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $CONF # 补齐这行
-          echo "CONFIG_KPM=y" >> $CONF
+          # 物理删除冲突项
+          sed -i '/CONFIG_STACKPROTECTOR/d' $CONF
+          sed -i '/CONFIG_DEBUG_INFO_BTF/d' $CONF
           
-          # 修复之前的报错
-          echo "CONFIG_DEBUG_INFO_BTF=n" >> $CONF
-          echo "CONFIG_STACKPROTECTOR=y" >> $CONF
-          echo "CONFIG_STACKPROTECTOR_STRONG=n" >> $CONF
-          
-          # 强制 ThinLTO 降低内存压力
-          echo "CONFIG_LTO_CLANG_THIN=y" >> $CONF
+          # 注入
+          {
+            echo "CONFIG_KSU=y"
+            echo "CONFIG_KSU_SUSFS=y"
+            echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
+            echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            echo "CONFIG_KPM=y"
+            # 解决 __stack_chk_guard 报错与无限重启
+            echo "CONFIG_STACKPROTECTOR=n"
+            echo "CONFIG_STACKPROTECTOR_STRONG=n"
+            echo "CONFIG_DEBUG_INFO_BTF=n"
+            echo "CONFIG_LTO_CLANG_THIN=y"
+          } >> $CONF
 
-      - name: 应用 SUSFS 补丁
-        run: |
-          cd sm8550
-          cp -f ../susfs4ksu/kernel_patches/fs/* ./fs/
-          cp -f ../susfs4ksu/kernel_patches/include/linux/* ./include/linux/
-          
-          # 自动寻找 5.15 补丁，防止文件名写死导致失败
-          find ../susfs4ksu/kernel_patches/ -name "*5.15*.patch" -exec patch -p1 --fuzz=3 < {} \; || echo "Patch applied with offsets"
-          
       - name: 执行内核编译
         working-directory: sm8550
         run: |
           CLANG_BIN="$GITHUB_WORKSPACE/toolchains/clang-android16-release/clang-r547379/bin"
           export PATH="${CLANG_BIN}:$PATH"
           export LLVM=1
-          export LLVM_IAS=1
-          export CC="${CLANG_BIN}/clang"
-          export HOSTCC="${CLANG_BIN}/clang"
-          export HOSTCXX="${CLANG_BIN}/clang++"
-          export LD="${CLANG_BIN}/ld.lld"
-          export AR="${CLANG_BIN}/llvm-ar"
-          export NM="${CLANG_BIN}/llvm-nm"
-          export OBJCOPY="${CLANG_BIN}/llvm-objcopy"
-          export OBJDUMP="${CLANG_BIN}/llvm-objdump"
-          export STRIP="${CLANG_BIN}/llvm-strip"
-
-          make ARCH=arm64 O=out gki_defconfig vendor/kalama_GKI.config vendor/oplus/kalama_GKI.config vendor/debugfs.config
-          make -j2 ARCH=arm64 O=out
           
+          # 构建配置
+          make ARCH=arm64 O=out gki_defconfig vendor/kalama_GKI.config vendor/oplus/kalama_GKI.config
+          # 编译
+          make -j$(nproc) ARCH=arm64 O=out CROSS_COMPILE=aarch64-linux-android-
 
       - name: 准备 AnyKernel3 刷机包
         run: |
-          # 1. 下载 AK3 和 补丁工具
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
-          rm -rf ./AnyKernel3/.git
+          # 自动定位 Image
+          RAW_IMAGE=$(find sm8550/out/arch/arm64/boot/ -name "Image" -type f | head -n 1)
+          cp "$RAW_IMAGE" ./Image
+          
+          # 执行 KPM 补丁
           curl -LO https://raw.githubusercontent.com/Numbersf/Action-Build/main/patches/patch_linux
           chmod +x patch_linux
-
-          # 2. 自动定位镜像并拷贝到当前目录
-          # 这一步是核心：先把镜像“抓”到跟 patch_linux 同一级，并强制改名 Image
-          RAW_IMAGE_PATH=$(find sm8550/out/arch/arm64/boot/ -name "Image" -type f | head -n 1)
-          if [ -z "$RAW_IMAGE_PATH" ]; then
-            RAW_IMAGE_PATH=$(find sm8550/out/ -name "Image" -type f | head -n 1)
-          fi
-
-          if [ -n "$RAW_IMAGE_PATH" ]; then
-            echo "✅ 找到镜像，正在搬运: $RAW_IMAGE_PATH"
-            cp "$RAW_IMAGE_PATH" ./Image
-          else
-            echo "❌ 彻底找不到镜像，请检查编译日志"
-            exit 1
-          fi
-
-          # 3. 此时 patch_linux 看到的 Image 就在它眼皮底下
           ./patch_linux Image
-
-          # 4. 移动结果到打包文件夹
-          if [ -f "oImage" ]; then
-            mv oImage ./AnyKernel3/Image
-            echo "✅ 补丁应用成功，产物已就绪"
-          else
-            echo "⚠️ 补丁未生成 oImage，保底使用原图"
-            mv Image ./AnyKernel3/Image
-          fi
+          mv oImage ./AnyKernel3/Image
 
       - name: 打包刷机包
         working-directory: AnyKernel3
         run: |
-          # 1. 就在当前目录打包，不要用 ../ 往外跳
           ZIP_NAME="Aston-SukiSU-Ultra-$(date +%Y%m%d).zip"
           zip -r9 "$ZIP_NAME" * -x .git README.md
-          
-          # 2. 把生成的 zip 移动到工作流根目录，方便上传插件读取
           mv "$ZIP_NAME" ../
-          
-          # 3. 记录文件名到环境变量
           echo "ZIP_FINAL_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
       - name: 上传刷机包
         uses: actions/upload-artifact@v4
         with:
           name: Aston-Kernel-AnyKernel3
-          # 4. 直接写文件名即可，因为它已经躺在根目录了
           path: ${{ env.ZIP_FINAL_NAME }}
