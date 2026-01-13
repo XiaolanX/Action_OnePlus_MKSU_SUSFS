@@ -57,7 +57,7 @@ jobs:
           ln -s ../sm8550-modules/include/oplus ./include/oplus
           
           # 5. 集成 SukiSU
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
 
       - name: 物理集成 SUSFS 核心文件与 ABI 修复
         working-directory: sm8550
