@@ -34,31 +34,34 @@ jobs:
           cd $GITHUB_WORKSPACE/toolchains
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android16-release clang-android16-release
 
-      - name: 集成 SukiSU 与 SUSFS (借用精华版)
+      - name: 集成 SukiSU 与 SUSFS (路径修复版)
         run: |
-          # 1. 准备环境
           git config --global user.email "2461654161@qq.com"
           git config --global user.name "XiaolanX"
           
-          # 2. 获取所有源码
+          # 克隆所有源码
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550.git --depth=1 -b sixteen-qpr1 sm8550
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550-modules.git --depth=1 -b sixteen-qpr1 sm8550-modules
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
 
-          # 3. 集成 SukiSU
+          # 【关键修复】创建符号链接，防止 Kconfig 报错
+          cd sm8550
+          ln -s ../sm8550-modules/kernel/oplus_cpu ./kernel/oplus_cpu
+          ln -s ../sm8550-modules/drivers/oplus ./drivers/oplus
+          ln -s ../sm8550-modules/include/oplus ./include/oplus
+          
+          # 集成 SukiSU
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
 
       - name: 物理集成 SUSFS 核心文件与 ABI 修复
         working-directory: sm8550
         run: |
-          # 1. 按照 A.yml 建议，搬运所有 fs 相关文件，确保功能完整
           cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
           cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h ./include/linux/
           cp ../susfs4ksu/kernel_patches/include/linux/susfs.h ./include/linux/
           
-          # 2. 核心：删除 ABI 保护文件 (预防无限重启的重中之重)
-          # 注意：在某些 A16 源码中路径可能在 kernel_platform 下，这里建议使用通配符查找删除
-          find . -name "abi_gki_protected_exports_*" -delete
+          # 全局清除 ABI 限制，这是防止开机重启的关键
+          find . -name "abi_gki_protected_exports_*" -delete || true
 
       - name: 注入内核配置 (全量功能开启)
         working-directory: sm8550
@@ -95,11 +98,15 @@ jobs:
           CLANG_BIN="$GITHUB_WORKSPACE/toolchains/clang-android16-release/clang-r547379/bin"
           export PATH="${CLANG_BIN}:$PATH"
           export LLVM=1
+          export LLVM_IAS=1
           
           # 构建配置
           make ARCH=arm64 O=out gki_defconfig vendor/kalama_GKI.config vendor/oplus/kalama_GKI.config
-          # 编译
-          make -j$(nproc) ARCH=arm64 O=out CROSS_COMPILE=aarch64-linux-android-
+          # 编译：明确指定交叉编译前缀
+          make -j$(nproc) ARCH=arm64 O=out \
+            CC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
 
       - name: 准备 AnyKernel3 刷机包
         run: |
