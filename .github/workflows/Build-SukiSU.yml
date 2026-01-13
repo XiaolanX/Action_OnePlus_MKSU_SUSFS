@@ -105,21 +105,52 @@ jobs:
 
       - name: 准备 AnyKernel3 刷机包
         run: |
+          # 1. 克隆打包工具
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           rm -rf ./AnyKernel3/.git
-          RAW_IMAGE="sm8550/out/arch/arm64/boot/Image"
+          
+          # 2. 自动定位内核镜像 (解决 File Image non-existent 问题)
+          # 我们在 sm8550/out 目录下寻找名为 Image 的文件
+          RAW_IMAGE=$(find sm8550/out/arch/arm64/boot/ -name "Image" -type f | head -n 1)
+          
+          if [ -z "$RAW_IMAGE" ]; then
+            echo "❌ 未能在预期位置找到 Image，扩大搜索范围..."
+            RAW_IMAGE=$(find sm8550/out/ -name "Image" -type f | head -n 1)
+          fi
+          
+          if [ -z "$RAW_IMAGE" ]; then
+            echo "❌ 错误：彻底找不到内核镜像，请检查编译日志是否真的成功"
+            ls -R sm8550/out/
+            exit 1
+          fi
+          
+          echo "✅ 成功找到内核镜像路径: $RAW_IMAGE"
+          
+          # 3. 下载并运行补丁工具
           curl -LO https://raw.githubusercontent.com/Numbersf/Action-Build/main/patches/patch_linux
           chmod +x patch_linux
           ./patch_linux "$RAW_IMAGE"
-          mv oImage ./AnyKernel3/Image
+          
+          # 4. 将修补后的镜像移动到打包目录
+          if [ -f "oImage" ]; then
+            mv oImage ./AnyKernel3/Image
+            echo "✅ 已使用 patch_linux 修复后的镜像"
+          else
+            echo "⚠️ patch_linux 未生成 oImage，尝试使用原始镜像"
+            cp "$RAW_IMAGE" ./AnyKernel3/Image
+          fi
 
       - name: 打包刷机包
         working-directory: AnyKernel3
         run: |
-          zip -r9 ../Aston-SukiSU-Ultra.zip * -x .git README.md
+          # 加上当前日期，方便你区分版本
+          ZIP_NAME="../Aston-SukiSU-Ultra-$(date +%Y%m%d).zip"
+          zip -r9 "$ZIP_NAME" * -x .git README.md
+          # 把文件名传递给下一步
+          echo "ZIP_PATH=$ZIP_NAME" >> $GITHUB_ENV
 
       - name: 上传刷机包
         uses: actions/upload-artifact@v4
         with:
           name: Aston-Kernel-AnyKernel3
-          path: Aston-SukiSU-Ultra.zip
+          path: ${{ env.ZIP_PATH }}
