@@ -75,13 +75,6 @@ jobs:
           # 自动寻找 5.15 补丁，防止文件名写死导致失败
           find ../susfs4ksu/kernel_patches/ -name "*5.15*.patch" -exec patch -p1 --fuzz=3 < {} \; || echo "Patch applied with offsets"
           
-      - name: 强制修改内核 SUBLEVEL 为 196
-        working-directory: sm8550
-        run: |
-          sed -i 's/^SUBLEVEL =.*/SUBLEVEL = 196/' Makefile
-          NEW_VER=$(head -n 5 Makefile | grep -E "^(VERSION|PATCHLEVEL|SUBLEVEL)" | awk '{print $3}' | tr '\n' '.' | sed 's/.$//')
-          echo "✅ 当前内核版本已修改为: $NEW_VER"
-
       - name: 执行内核编译
         working-directory: sm8550
         run: |
