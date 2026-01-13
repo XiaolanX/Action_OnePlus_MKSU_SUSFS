@@ -141,14 +141,19 @@ jobs:
       - name: 打包刷机包
         working-directory: AnyKernel3
         run: |
-          # 加上当前日期，方便你区分版本
-          ZIP_NAME="../Aston-SukiSU-Ultra-$(date +%Y%m%d).zip"
+          # 1. 就在当前目录打包，不要用 ../ 往外跳
+          ZIP_NAME="Aston-SukiSU-Ultra-$(date +%Y%m%d).zip"
           zip -r9 "$ZIP_NAME" * -x .git README.md
-          # 把文件名传递给下一步
-          echo "ZIP_PATH=$ZIP_NAME" >> $GITHUB_ENV
+          
+          # 2. 把生成的 zip 移动到工作流根目录，方便上传插件读取
+          mv "$ZIP_NAME" ../
+          
+          # 3. 记录文件名到环境变量
+          echo "ZIP_FINAL_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
       - name: 上传刷机包
         uses: actions/upload-artifact@v4
         with:
           name: Aston-Kernel-AnyKernel3
-          path: ${{ env.ZIP_PATH }}
+          # 4. 直接写文件名即可，因为它已经躺在根目录了
+          path: ${{ env.ZIP_FINAL_NAME }}
