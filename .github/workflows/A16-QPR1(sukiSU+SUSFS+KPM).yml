@@ -1,4 +1,4 @@
-name: Build Aston Kernel (SukiSU + SUSFS + KPM + AK3)
+name: A16-QPR1(sukiSU+SUSFS+KPM)
 
 on:
   workflow_dispatch:
