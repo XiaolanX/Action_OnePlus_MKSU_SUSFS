@@ -43,43 +43,24 @@ jobs:
           # 2. 获取所有源码
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550.git --depth=1 -b sixteen-qpr1 sm8550
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550-modules.git --depth=1 -b sixteen-qpr1 sm8550-modules
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-6.1
-          
-          # 3. 物理拷贝 SUSFS 核心文件 (避开 50号补丁的坑)
-          cd sm8550
-          cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
-          cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h ./include/linux/
-          cp ../susfs4ksu/kernel_patches/include/linux/susfs.h ./include/linux/
-          
-          # 4. 解决重启的关键：删除 ABI 保护
-          rm -f android/abi_gki_protected_exports_*
-          
-          # 5. 集成 SukiSU
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
+
+          # 3. 集成 SukiSU
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
-          
-          # 6. 给 SukiSU 打上 SUSFS 增强补丁
-          cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
-          cd ./KernelSU && patch -p1 < 10_enable_susfs_for_ksu.patch
 
       - name: 物理集成 SUSFS 核心文件与 ABI 修复
         working-directory: sm8550
         run: |
-          # 1. 按照文档建议，物理拷贝文件到内核树
+          # 1. 按照 A.yml 建议，搬运所有 fs 相关文件，确保功能完整
           cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
           cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h ./include/linux/
           cp ../susfs4ksu/kernel_patches/include/linux/susfs.h ./include/linux/
           
-          # 2. 核心：删除 ABI 保护文件 (防止 A14/A16 WiFi/驱动崩溃重启)
-          rm -f android/abi_gki_protected_exports_aarch64
-          rm -f android/abi_gki_protected_exports_x86_64
+          # 2. 核心：删除 ABI 保护文件 (预防无限重启的重中之重)
+          # 注意：在某些 A16 源码中路径可能在 kernel_platform 下，这里建议使用通配符查找删除
+          find . -name "abi_gki_protected_exports_*" -delete
 
-      - name: 集成 SukiSU-Ultra (注入钩子)
-        working-directory: sm8550
-        run: |
-          # 只调用一次 setup.sh，它会自动处理 KSU 的钩子注入
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-
-      - name: 注入内核配置 (彻底解决符号与重启问题)
+      - name: 注入内核配置 (全量功能开启)
         working-directory: sm8550
         run: |
           CONF="arch/arm64/configs/vendor/kalama_GKI.config"
@@ -94,8 +75,14 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
             echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
             echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            # 补齐 A.yml 中的高级隐藏项
+            echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
+            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
+            
             echo "CONFIG_KPM=y"
-            # 解决 __stack_chk_guard 报错与无限重启
+            # 解决 __stack_chk_guard 报错与重启
             echo "CONFIG_STACKPROTECTOR=n"
             echo "CONFIG_STACKPROTECTOR_STRONG=n"
             echo "CONFIG_DEBUG_INFO_BTF=n"
