@@ -34,30 +34,32 @@ jobs:
           cd $GITHUB_WORKSPACE/toolchains
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android16-release clang-android16-release
 
-      - name: 获取源码与准备环境
+      - name: 集成 SukiSU 与 SUSFS (借用精华版)
         run: |
+          # 1. 准备环境
           git config --global user.email "2461654161@qq.com"
           git config --global user.name "XiaolanX"
           
-          # 1. 克隆主源码
+          # 2. 获取所有源码
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550.git --depth=1 -b sixteen-qpr1 sm8550
-          
-          # 2. 克隆模块源码 (这就是报错里缺的东西)
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550-modules.git --depth=1 -b sixteen-qpr1 sm8550-modules
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-6.1
           
-          # 3. 克隆 SUSFS
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
-
-          # 4. 【关键修复】创建符号链接，解决 Kconfig 找不到文件的问题
-          # 报错说缺 kernel/oplus_cpu，我们就把模块库里的文件夹链过去
+          # 3. 物理拷贝 SUSFS 核心文件 (避开 50号补丁的坑)
           cd sm8550
-          ln -s ../sm8550-modules/kernel/oplus_cpu ./kernel/oplus_cpu
-          # 顺便把其他可能缺的也链上，防止后续报错
-          ln -s ../sm8550-modules/drivers/oplus ./drivers/oplus
-          ln -s ../sm8550-modules/include/oplus ./include/oplus
+          cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h ./include/linux/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs.h ./include/linux/
+          
+          # 4. 解决重启的关键：删除 ABI 保护
+          rm -f android/abi_gki_protected_exports_*
           
           # 5. 集成 SukiSU
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
+          
+          # 6. 给 SukiSU 打上 SUSFS 增强补丁
+          cp ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
+          cd ./KernelSU && patch -p1 < 10_enable_susfs_for_ksu.patch
 
       - name: 物理集成 SUSFS 核心文件与 ABI 修复
         working-directory: sm8550
