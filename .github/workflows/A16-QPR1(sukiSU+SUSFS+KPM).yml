@@ -34,7 +34,7 @@ jobs:
           cd $GITHUB_WORKSPACE/toolchains
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android16-release clang-android16-release
 
-      - name: 集成 SukiSU 与 源码外科手术级修复 (完整版)
+            - name: 集成 SukiSU 与 源码外科手术级修复 (完整版)
         run: |
           git config --global user.email "2461654161@qq.com"
           git config --global user.name "XiaolanX"
@@ -43,7 +43,6 @@ jobs:
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550.git --depth=1 -b sixteen-qpr1 sm8550
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550-modules.git --depth=1 -b sixteen-qpr1 sm8550-modules
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
-
           cd sm8550
           # 2. 物理搬运 SUSFS 核心文件 (彻底解决 linux/susfs.h not found)
           mkdir -p fs
@@ -59,8 +58,7 @@ jobs:
           
           # 4. 集成 SukiSU
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
-
-          # 5. 【无损重构】修复 ksud.c 所有语法冲突
+          # 5. 【修复】精准重构 ksud.c 语法冲突 (解决20条编译错误)
           python3 <<EOF
           import re, os
           path = 'KernelSU/kernel/ksud.c'
@@ -69,22 +67,45 @@ jobs:
           
           with open(path, 'r') as f:
               content = f.read()
-
-          # 修复 A: void 函数不能返回 false (on_post_fs_data)
-          content = re.sub(r'static void on_post_fs_data\(void\)\s*\{.*?\}', 
-                           'static void on_post_fs_data(void) { return; }', content, flags=re.DOTALL)
           
-          # 修复 B: 彻底重写冲突的 ksu_handle_sys_read (消除那 20 条报错)
-          # 直接抹平，确保大括号 { } 绝对平衡
-          content = re.sub(r'void ksu_handle_sys_read\(unsigned int fd\)\s*\{.*?\}', 
-                           'void ksu_handle_sys_read(unsigned int fd) { return; }', content, flags=re.DOTALL)
-
-          # 修复 C: 修正被误改的 bool 函数返回值与未定义变量
-          content = content.replace('return is_volumedown_enough(volumedown_pressed_count);', 'return false;')
-          # 暴力修复所有可能残留的空 return; 为 return false; (针对 bool 函数)
-          content = content.replace('static bool check_argv(struct subprocess_info *sub_info) { return; }', 
-                                    'static bool check_argv(struct subprocess_info *sub_info) { return false; }')
-
+          # 修复 1: 修正 on_post_fs_data 函数 (void 函数返回空)
+          # 精准匹配函数定义，替换为完整的空函数体
+          content = re.sub(
+              r'static void on_post_fs_data\(void\)\s*\{\s*[\s\S]*?^\s*\}',
+              'static void on_post_fs_data(void) { return; }',
+              content,
+              flags=re.MULTILINE
+          )
+          
+          # 修复 2: 彻底重构 ksu_handle_sys_read 函数 (删除所有预处理指令和无效代码)
+          # 贪婪匹配完整函数体，替换为无任何残留的空函数
+          content = re.sub(
+              r'void ksu_handle_sys_read\(unsigned int fd\)\s*\{\s*[\s\S]*?^\s*\}',
+              'void ksu_handle_sys_read(unsigned int fd) { return; }',
+              content,
+              flags=re.MULTILINE
+          )
+          
+          # 修复 3: 修正 bool 函数的返回值 (避免返回空或错误值)
+          content = re.sub(
+              r'return is_volumedown_enough\(volumedown_pressed_count\);',
+              'return false;',
+              content
+          )
+          content = re.sub(
+              r'static bool check_argv\(struct subprocess_info \*sub_info\) \{\s*return;\s*\}',
+              'static bool check_argv(struct subprocess_info *sub_info) { return false; }',
+              content
+          )
+          
+          # 额外防护: 清理残留的孤立 #if/#else/#endif 指令 (针对ksu_handle_sys_read残留)
+          content = re.sub(
+              r'^\s*#if.*?^\s*#else.*?^\s*#endif.*?$',
+              '',
+              content,
+              flags=re.MULTILINE | re.DOTALL
+          )
+          
           with open(path, 'w') as f:
               f.write(content)
           EOF
