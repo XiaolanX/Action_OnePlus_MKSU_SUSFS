@@ -34,7 +34,7 @@ jobs:
           cd $GITHUB_WORKSPACE/toolchains
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android16-release clang-android16-release
 
-            - name: 集成 SukiSU 与 源码外科手术级修复 (完整版)
+      - name: 集成 SukiSU 与 源码外科手术级修复 (完整版)
         run: |
           git config --global user.email "2461654161@qq.com"
           git config --global user.name "XiaolanX"
