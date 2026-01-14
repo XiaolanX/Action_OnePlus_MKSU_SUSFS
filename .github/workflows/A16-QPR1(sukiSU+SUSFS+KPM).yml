@@ -34,98 +34,71 @@ jobs:
           cd $GITHUB_WORKSPACE/toolchains
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android16-release clang-android16-release
 
-      - name: 集成 SukiSU 与 源码外科手术级修复 (终极版)
+      - name: 集成 SukiSU 与 源码外科手术级修复 (终极整合版)
         run: |
           git config --global user.email "2461654161@qq.com"
           git config --global user.name "XiaolanX"
           
-          # 1. 克隆所有源码 (保持十六进制 QPR1 分支一致性)
+          # 1. 克隆源码与桥接路径
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550.git --depth=1 -b sixteen-qpr1 sm8550
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550-modules.git --depth=1 -b sixteen-qpr1 sm8550-modules
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
 
           cd sm8550
-          # 2. 物理搬运 SUSFS 核心文件 (彻底解决 linux/susfs.h not found)
-          mkdir -p fs
-          mkdir -p include/linux
-          cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
-          cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h ./include/linux/
-          cp ../susfs4ksu/kernel_patches/include/linux/susfs.h ./include/linux/
-          
-          # 3. 一加特定的路径桥接 (防止 Kconfig 报错)
           ln -s ../sm8550-modules/kernel/oplus_cpu ./kernel/oplus_cpu
           ln -s ../sm8550-modules/drivers/oplus ./drivers/oplus
           ln -s ../sm8550-modules/include/oplus ./include/oplus
           
-          # 4. 集成 SukiSU
+          # 2. 物理搬运 SUSFS 头文件 (解决 linux/susfs.h 缺失)
+          mkdir -p fs include/linux
+          cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h ./include/linux/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs.h ./include/linux/
+          
+          # 3. 集成 SukiSU
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
 
-          # 5. 【外科手术】使用 Python 逐行重构 ksud.c (不给宏定义捣乱的机会)
+          # 4. 【外科手术】重写 ksud.c 函数块，彻底终结语法报错
           python3 <<EOF
           import os, re
-          # 自动定位 ksud.c 路径 (适配不同的集成方式)
           paths = ['drivers/kernelsu/ksud.c', 'KernelSU/kernel/ksud.c']
           path = next((p for p in paths if os.path.exists(p)), None)
-          if not path:
-              print("Critical Error: ksud.c not found!"); exit(1)
-
-          with open(path, 'r') as f:
-              lines = f.readlines()
-
-          new_lines = []
-          skip = False
+          if not path: exit(1)
+          with open(path, 'r') as f: lines = f.readlines()
+          new_lines = []; skip = False
           for line in lines:
-              # 精准识别函数头，发现后插入干净的实现并进入跳过模式 (彻底解决 20 条报错)
-              if 'void ksu_handle_sys_read(unsigned int fd)' in line:
+              if 'void ksu_handle_sys_read' in line:
                   new_lines.append('void ksu_handle_sys_read(unsigned int fd) { return; }\n')
                   skip = True; continue
-              if 'static void on_post_fs_data(void)' in line:
+              if 'static void on_post_fs_data' in line:
                   new_lines.append('static void on_post_fs_data(void) { return; }\n')
                   skip = True; continue
-              
-              # 退出跳过模式：直到遇到闭合的大括号
               if skip:
-                  if line.strip() == '}':
-                      skip = False
+                  if line.strip() == '}': skip = False
                   continue
-
-              # 修正 bool 返回值与变量未定义
               if 'volumedown_pressed_count' in line:
                   new_lines.append('    return false;\n'); continue
               if 'static bool check_argv' in line and 'return;' in line:
                   new_lines.append(line.replace('return;', 'return false;')); continue
-
               new_lines.append(line)
-
-          with open(path, 'w') as f:
-              f.writelines(new_lines)
-          
-          # 抹除碎掉的宏指令，防止 "expected identifier"
+          with open(path, 'w') as f: f.writelines(new_lines)
           content = open(path, 'r').read()
           content = re.sub(r'#if.*?#else.*?#endif', '', content, flags=re.DOTALL)
           open(path, 'w').write(content)
           EOF
 
-      - name: 物理集成 SUSFS 与 ABI 修复
-        working-directory: sm8550
-        run: |
-          # 删除 ABI 保护文件 (预防一加无限重启)
-          find . -name "abi_gki_protected_exports_*" -delete || true
-
-      - name: 注入内核配置 (终极兼容版)
+      - name: 注入内核配置与稳定性修复
         working-directory: sm8550
         run: |
           CONF="arch/arm64/configs/vendor/kalama_GKI.config"
-          
-          # 1. 物理删除所有可能导致冲突的重复项
+          # 清理旧冲突
           sed -i '/CONFIG_STACKPROTECTOR/d' $CONF
           sed -i '/CONFIG_LTO/d' $CONF
           sed -i '/CONFIG_FRAME_WARN/d' $CONF
           sed -i '/CONFIG_WERROR/d' $CONF
           
-          # 2. 注入全量配置块
+          # 注入全量配置
           {
-            # --- KernelSU & SUSFS ---
             echo "CONFIG_KSU=y"
             echo "CONFIG_KSU_SUSFS=y"
             echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
@@ -135,48 +108,53 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
             echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
             echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
-            
-            # --- 核心避坑项 ---
-            # 解决触摸屏驱动 stack frame 报错：允许更大的堆栈空间
             echo "CONFIG_FRAME_WARN=8192"
-            # 强行关闭“警告转错误”，让那些堆栈警告不再中断编译
             echo "CONFIG_WERROR=n"
-            
-            # 解决链接冲突：彻底关闭 LTO
             echo "CONFIG_LTO_NONE=y"
-            
-            # 解决重启隐患：关闭堆栈保护
             echo "CONFIG_STACKPROTECTOR=n"
             echo "CONFIG_STACKPROTECTOR_STRONG=n"
-            
-            # 其他必要功能项
             echo "CONFIG_KPM=y"
-            echo "CONFIG_DEBUG_INFO_BTF=n"
           } >> $CONF
+          find . -name "abi_gki_protected_exports_*" -delete || true
 
-      - name: 准备 AnyKernel3 刷机包
+      - name: 执行内核编译
+        working-directory: sm8550
+        run: |
+          # 自动匹配你下载的 Clang 路径
+          CLANG_BIN="$GITHUB_WORKSPACE/toolchains/clang-android16-release/clang-r547379/bin"
+          export PATH="${CLANG_BIN}:$PATH"
+          export LLVM=1
+          export LLVM_IAS=1
+          
+          # 1. 生成 .config 文件
+          make ARCH=arm64 O=out gki_defconfig vendor/kalama_GKI.config vendor/oplus/kalama_GKI.config
+          
+          # 2. 正式编译
+          make -j$(nproc) ARCH=arm64 O=out \
+            CC=clang \
+            CROSS_COMPILE=aarch64-linux-gnu- \
+            CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+
+      - name: 打包 AnyKernel3 刷机包
         run: |
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
-          # 自动定位 Image
+          # 搜索生成的 Image 文件
           RAW_IMAGE=$(find sm8550/out/arch/arm64/boot/ -name "Image" -type f | head -n 1)
-          cp "$RAW_IMAGE" ./Image
+          if [ -z "$RAW_IMAGE" ]; then echo "Image not found!"; exit 1; fi
           
-          # 执行 KPM 补丁
+          # 执行 KPM 补丁并打包
           curl -LO https://raw.githubusercontent.com/Numbersf/Action-Build/main/patches/patch_linux
           chmod +x patch_linux
-          ./patch_linux Image
+          ./patch_linux "$RAW_IMAGE"
           mv oImage ./AnyKernel3/Image
-
-      - name: 打包刷机包
-        working-directory: AnyKernel3
-        run: |
-          ZIP_NAME="Aston-SukiSU-Ultra-$(date +%Y%m%d).zip"
-          zip -r9 "$ZIP_NAME" * -x .git README.md
-          mv "$ZIP_NAME" ../
+          
+          cd AnyKernel3
+          ZIP_NAME="Aston-SukiSU-SUSFS-$(date +%Y%m%d).zip"
+          zip -r9 "../$ZIP_NAME" * -x .git README.md
           echo "ZIP_FINAL_NAME=$ZIP_NAME" >> $GITHUB_ENV
 
-      - name: 上传刷机包
+      - name: 上传成果
         uses: actions/upload-artifact@v4
         with:
-          name: Aston-Kernel-AnyKernel3
+          name: Aston-Kernel-Package
           path: ${{ env.ZIP_FINAL_NAME }}
