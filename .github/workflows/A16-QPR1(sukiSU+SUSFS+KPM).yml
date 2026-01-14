@@ -34,69 +34,60 @@ jobs:
           cd $GITHUB_WORKSPACE/toolchains
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android16-release clang-android16-release
 
-      - name: 集成 SukiSU 与 源码外科手术级修复
+      - name: 集成 SukiSU 与 SUSFS 核心修复
         run: |
           git config --global user.email "2461654161@qq.com"
           git config --global user.name "XiaolanX"
           
-          # 1. 克隆源码
+          # 1. 克隆所有源码
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550.git --depth=1 -b sixteen-qpr1 sm8550
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550-modules.git --depth=1 -b sixteen-qpr1 sm8550-modules
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
 
           cd sm8550
-          # 2. 路径修复
+          # 2. 一加特定的路径桥接
           ln -s ../sm8550-modules/kernel/oplus_cpu ./kernel/oplus_cpu
           ln -s ../sm8550-modules/drivers/oplus ./drivers/oplus
           ln -s ../sm8550-modules/include/oplus ./include/oplus
           
-          # 3. 集成 SukiSU
+          # 3. 物理搬运 SUSFS 核心文件 (解决 linux/susfs.h not found 的关键)
+          # 必须在编译前确保这些文件在内核对应的 include 目录下
+          cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h ./include/linux/
+          cp ../susfs4ksu/kernel_patches/include/linux/susfs.h ./include/linux/
+          
+          # 4. 集成 SukiSU
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
 
-          # 4. 【核心修复】使用 Python 处理所有语法冲突
-          # 这段脚本会精准处理 void 返回值、non-void 返回值以及未定义变量问题
-          cat <<EOF > fix_ksu_final.py
+          # 5. 【外科手术】修复所有语法冲突
+          python3 <<EOF
           import os
-
           path = 'KernelSU/kernel/ksud.c'
-          if not os.path.exists(path):
-              print("Error: ksud.c not found")
-              exit(1)
-
-          with open(path, 'r') as f:
-              lines = f.readlines()
-
-          new_lines = []
-          skip_read_hook = False
-
-          for line in lines:
-              # 修复 ksu_handle_sys_read: 将其体部清空，防止 void return value 报错
-              if 'void ksu_handle_sys_read(unsigned int fd)' in line:
-                  new_lines.append('void ksu_handle_sys_read(unsigned int fd) { return; }\n')
-                  skip_read_hook = True
-                  continue
-              if skip_read_hook:
-                  if line.strip() == '}':
-                      skip_read_hook = False
-                  continue
-              
-              # 修复 volumedown_pressed_count 未定义问题
-              if 'return is_volumedown_enough(volumedown_pressed_count);' in line:
-                  new_lines.append('    return false;\n')
-                  continue
-
-              # 修复之前被 sed 毁掉的 return; (恢复 bool 函数的返回值)
-              # 针对 check_argv, is_init_rc, check_init_path 等函数
-              if 'static bool' in line or 'int ' in line:
-                  # 这里只是占位，逻辑上后续的 return 会被修正
-                  pass
-              
-              new_lines.append(line)
-
-          with open(path, 'w') as f:
-              f.writelines(new_lines)
+          if os.path.exists(path):
+              with open(path, 'r') as f:
+                  lines = f.readlines()
+              new_lines = []
+              skip_read_hook = False
+              for line in lines:
+                  # 修复 void 函数错误返回 false 的问题
+                  if 'void ksu_handle_sys_read(unsigned int fd)' in line:
+                      new_lines.append('void ksu_handle_sys_read(unsigned int fd) { return; }\n')
+                      skip_read_hook = True
+                      continue
+                  if skip_read_hook:
+                      if line.strip() == '}': skip_read_hook = False
+                      continue
+                  # 修复变量未定义问题
+                  if 'volumedown_pressed_count' in line:
+                      new_lines.append('    return false;\n')
+                      continue
+                  # 修复被误删的 bool 返回值
+                  if 'return;' in line and 'void' not in line:
+                      line = line.replace('return;', 'return false;')
+                  new_lines.append(line)
+              with open(path, 'w') as f:
+                  f.writelines(new_lines)
           EOF
-          python3 fix_ksu_final.py
 
       - name: 注入内核配置 (全量功能开启)
         working-directory: sm8550
