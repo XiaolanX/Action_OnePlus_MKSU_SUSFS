@@ -112,17 +112,19 @@ jobs:
           # 删除 ABI 保护文件 (预防一加无限重启)
           find . -name "abi_gki_protected_exports_*" -delete || true
 
-      - name: 注入内核配置 (极致兼容版)
+      - name: 注入内核配置 (极致兼容与堆栈修复版)
         working-directory: sm8550
         run: |
           CONF="arch/arm64/configs/vendor/kalama_GKI.config"
-          # 彻底清理可能导致冲突的旧配置
+          
+          # 1. 彻底清理冲突项
           sed -i '/CONFIG_STACKPROTECTOR/d' $CONF
           sed -i '/CONFIG_LTO/d' $CONF
-          sed -i '/CONFIG_DEBUG_INFO_BTF/d' $CONF
+          sed -i '/CONFIG_FRAME_WARN/d' $CONF
           
-          # 注入全量功能
+          # 2. 注入配置块
           {
+            # --- KernelSU & SUSFS 配置 ---
             echo "CONFIG_KSU=y"
             echo "CONFIG_KSU_SUSFS=y"
             echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
@@ -132,14 +134,23 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
             echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
             echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
-            # 解决冲突的关键：强制关闭 LTO 以防链接报错
+            
+            # --- 核心稳定性修复 (针对你刚才的报错) ---
+            # 将堆栈警告阈值从 2048 提高到 8192，解决 touchpanel_proc.c 报错
+            echo "CONFIG_FRAME_WARN=8192"
+            
+            # 关闭 LTO 以防链接冲突
             echo "CONFIG_LTO_NONE=y"
+            
+            # 关闭堆栈保护以防止一加源码常见的 Panic 重启
             echo "CONFIG_STACKPROTECTOR=n"
             echo "CONFIG_STACKPROTECTOR_STRONG=n"
-            echo "CONFIG_DEBUG_INFO_BTF=n"
+            
+            # 其他必要项
             echo "CONFIG_KPM=y"
+            echo "CONFIG_DEBUG_INFO_BTF=n"
           } >> $CONF
-
+          
       - name: 执行内核编译
         working-directory: sm8550
         run: |
