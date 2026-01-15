@@ -22,49 +22,60 @@ jobs:
           cd $GITHUB_WORKSPACE/toolchains
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android16-release clang-android16-release
 
-      - name: 集成 SukiSU 与 源码物理级屏蔽修复
+      - name: 源码获取与全量外科手术修复
         run: |
-          # (前后的 git clone 和 setup.sh 保持不变)
+          git config --global user.email "2461654161@qq.com"
+          git config --global user.name "XiaolanX"
+          
+          # 1. 下载源码 (显式指定文件夹名为 sm8550)
+          git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550.git --depth=1 -b sixteen-qpr1 sm8550
+          git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550-modules.git --depth=1 -b sixteen-qpr1 sm8550-modules
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
+
+          # 检查目录是否真的存在，不存在直接报错退出
+          if [ ! -d "sm8550" ]; then echo "源码克隆失败！"; exit 1; fi
+
+          # 进入 sm8550 目录进行后续操作
           cd sm8550
-          # 物理搬运 SUSFS (解决头文件报错)
+          
+          # 2. 物理搬运 SUSFS (注意路径：.. 代表回到根目录找镜像仓库)
           mkdir -p fs include/linux
           cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
           cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h ./include/linux/
           cp ../susfs4ksu/kernel_patches/include/linux/susfs.h ./include/linux/
           
-          # 集成 SukiSU
+          # 3. 路径桥接
+          ln -s ../sm8550-modules/kernel/oplus_cpu ./kernel/oplus_cpu
+          ln -s ../sm8550-modules/drivers/oplus ./drivers/oplus
+          ln -s ../sm8550-modules/include/oplus ./include/oplus
+          
+          # 4. 集成 SukiSU
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
 
-          # 【核心修复】用 #if 0 彻底封印报错区域
+          # 5. Python 修复 (就在当前目录跑，路径直接写 drivers/...)
           python3 <<EOF
-          import os
+          import os, re
+          # 尝试多个可能的路径
           path = 'drivers/kernelsu/ksud.c' if os.path.exists('drivers/kernelsu/ksud.c') else 'KernelSU/kernel/ksud.c'
+          if not os.path.exists(path):
+              print("找不到 ksud.c，请检查 setup.sh 是否运行成功")
+              exit(1)
+              
           with open(path, 'r') as f:
               content = f.read()
 
-          # 1. 修复 on_post_fs_data 声明冲突：直接抹平这个函数块
-          import re
-          content = re.sub(r'(static\s+)?void\s+on_post_fs_data\(void\)\s*\{.*?\}', 
-                           'void on_post_fs_data(void) { return; }', content, flags=re.DOTALL)
-
-          # 2. 封印 ksu_handle_sys_read 及后续所有乱跑的宏代码块
-          # 我们直接把这个函数名改成一个没人调用的名字，或者干脆清空
-          content = re.sub(r'void\s+ksu_handle_sys_read\(unsigned\s+int\s+fd\)\s*\{.*?\}', 
-                           'void ksu_handle_sys_read(unsigned int fd) { return; }', content, flags=re.DOTALL)
-
-          # 3. 针对那 20 条 expected identifier 报错，最直接的方法是屏蔽掉那块出问题的区域
-          # 查找报错起始位置并用 #if 0 包起来
+          # 修复函数声明与封印冲突代码
+          content = re.sub(r'(static\s+)?void\s+on_post_fs_data\(void\)\s*\{.*?\}', 'void on_post_fs_data(void) { return; }', content, flags=re.DOTALL)
+          content = re.sub(r'void\s+ksu_handle_sys_read\(unsigned\s+int\s+fd\)\s*\{.*?\}', 'void ksu_handle_sys_read(unsigned int fd) { return; }', content, flags=re.DOTALL)
+          
+          # 使用 #if 0 暴力切断 514 行附近的宏碎裂区
           content = content.replace('if (!is_init_rc(file)) {', '#if 0\nif (!is_init_rc(file)) {')
-          # 尝试找到这块逻辑的结尾（通常在 ksud.c 末尾附近）
-          content = content + '\n#endif\n'
-
-          # 4. 修复 volumedown 变量
-          content = content.replace('return is_volumedown_enough(volumedown_pressed_count);', 'return false;')
+          if '#if 0' in content:
+              content += '\n#endif\n'
 
           with open(path, 'w') as f:
               f.write(content)
           EOF
-
       - name: 注入内核配置 (关闭 WERROR 护航版)
         working-directory: sm8550
         run: |
