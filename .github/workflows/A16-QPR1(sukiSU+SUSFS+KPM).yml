@@ -31,7 +31,7 @@ jobs:
           cd $GITHUB_WORKSPACE/toolchains
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android16-release clang-android16-release
 
-      - name: 集成 SukiSU 与 源码精准重构
+      - name: 集成 SukiSU 与 源码结构性重构
         run: |
           git config --global user.email "2461654161@qq.com"
           git config --global user.name "XiaolanX"
@@ -55,7 +55,7 @@ jobs:
           # 3. 集成 SukiSU
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
 
-          # 4. 【核心修复】Python 暴力重写 ksud.c 冲突函数块 (终结 20 条报错)
+          # 4. 【核心修复】Python 逐行扫描修复 ksud.c (彻底终结 20 条报错)
           python3 <<EOF
           import os, re
           # 自动定位路径
@@ -64,41 +64,43 @@ jobs:
           
           new_lines = []; skip = False
           for line in lines:
-              # 发现冲突函数头，插入干净的一行实现并开启跳过模式
+              # 发现目标函数头，插入单行实现并开启跳过模式
               if 'void ksu_handle_sys_read' in line:
                   new_lines.append('void ksu_handle_sys_read(unsigned int fd) { return; }\n')
                   skip = True; continue
               if 'static void on_post_fs_data' in line:
                   new_lines.append('static void on_post_fs_data(void) { return; }\n')
                   skip = True; continue
+              
               if skip:
                   if line.strip() == '}': skip = False
                   continue
-              # 修复变量未定义与 bool 返回值
+              
+              # 修复 bool 返回值
               if 'volumedown_pressed_count' in line:
                   new_lines.append('    return false;\n'); continue
               if 'static bool check_argv' in line and 'return;' in line:
                   new_lines.append(line.replace('return;', 'return false;')); continue
+              
               new_lines.append(line)
           
           with open(path, 'w') as f: f.writelines(new_lines)
-          # 彻底清除可能残留的碎裂宏定义
-          c = open(path, 'r').read()
-          c = re.sub(r'#if.*?#else.*?#endif', '', c, flags=re.DOTALL)
-          open(path, 'w').write(c)
+          
+          # 清除碎裂宏定义干扰
+          content = open(path, 'r').read()
+          content = re.sub(r'#if.*?#else.*?#endif', '', content, flags=re.DOTALL)
+          open(path, 'w').write(content)
           EOF
 
       - name: 注入内核配置与稳定性修复
         working-directory: sm8550
         run: |
           CONF="arch/arm64/configs/vendor/kalama_GKI.config"
-          # 清理冲突项
           sed -i '/CONFIG_STACKPROTECTOR/d' $CONF
           sed -i '/CONFIG_LTO/d' $CONF
           sed -i '/CONFIG_FRAME_WARN/d' $CONF
           sed -i '/CONFIG_WERROR/d' $CONF
           
-          # 注入极致兼容配置
           {
             echo "CONFIG_KSU=y"
             echo "CONFIG_KSU_SUSFS=y"
@@ -109,8 +111,8 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
             echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
             echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
-            echo "CONFIG_FRAME_WARN=8192" # 解决触摸屏驱动报错
-            echo "CONFIG_WERROR=n"       # 允许警告通过
+            echo "CONFIG_FRAME_WARN=8192" # 解决触摸屏堆栈报错
+            echo "CONFIG_WERROR=n"       # 忽略小警告
             echo "CONFIG_LTO_NONE=y"      # 链接保命符
             echo "CONFIG_STACKPROTECTOR=n"
             echo "CONFIG_STACKPROTECTOR_STRONG=n"
@@ -133,7 +135,7 @@ jobs:
           curl -LO https://raw.githubusercontent.com/Numbersf/Action-Build/main/patches/patch_linux
           chmod +x patch_linux && ./patch_linux "$RAW_IMAGE"
           mv oImage ./AnyKernel3/Image
-          cd AnyKernel3 && zip -r9 "../Aston-Kernel-$(date +%Y%m%d).zip" * -x .git README.md
+          cd AnyKernel3 && zip -r9 "../Aston-SukiSU-SUSFS-$(date +%Y%m%d).zip" * -x .git README.md
 
       - name: 上传成果
         uses: actions/upload-artifact@v4
