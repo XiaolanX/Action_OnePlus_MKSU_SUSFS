@@ -10,15 +10,6 @@ jobs:
       - name: 深度清理磁盘空间
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost
 
-      - name: Maximize Build Space
-        uses: easimon/maximize-build-space@master
-        with:
-          root-reserve-mb: 8192
-          temp-reserve-mb: 2048
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-
       - name: 准备依赖
         run: |
           sudo apt-get update
@@ -31,7 +22,7 @@ jobs:
           cd $GITHUB_WORKSPACE/toolchains
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android16-release clang-android16-release
 
-      - name: 集成 SukiSU 与 源码结构性重构
+      - name: 集成 SukiSU 与 源码行级修复
         run: |
           git config --global user.email "2461654161@qq.com"
           git config --global user.name "XiaolanX"
@@ -46,7 +37,7 @@ jobs:
           ln -s ../sm8550-modules/drivers/oplus ./drivers/oplus
           ln -s ../sm8550-modules/include/oplus ./include/oplus
           
-          # 2. 物理搬运 SUSFS 头文件 (解决 linux/susfs.h 缺失)
+          # 2. 物理搬运 SUSFS 头文件
           mkdir -p fs include/linux
           cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
           cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h ./include/linux/
@@ -55,44 +46,48 @@ jobs:
           # 3. 集成 SukiSU
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
 
-          # 4. 【核心修复】Python 逐行扫描修复 ksud.c (彻底终结 20 条报错)
+          # 4. 【终极修复】Python 行级重构 ksud.c
           python3 <<EOF
-          import os, re
-          # 自动定位路径
+          import os
           path = 'drivers/kernelsu/ksud.c' if os.path.exists('drivers/kernelsu/ksud.c') else 'KernelSU/kernel/ksud.c'
-          with open(path, 'r') as f: lines = f.readlines()
+          with open(path, 'r') as f:
+              lines = f.readlines()
           
-          new_lines = []; skip = False
+          new_lines = []
+          skip = False
           for line in lines:
-              # 发现目标函数头，插入单行实现并开启跳过模式
+              # 匹配到冲突函数，直接插入干净的空实现，并进入跳过模式
               if 'void ksu_handle_sys_read' in line:
                   new_lines.append('void ksu_handle_sys_read(unsigned int fd) { return; }\n')
-                  skip = True; continue
+                  skip = True
+                  continue
               if 'static void on_post_fs_data' in line:
                   new_lines.append('static void on_post_fs_data(void) { return; }\n')
-                  skip = True; continue
-              
-              if skip:
-                  if line.strip() == '}': skip = False
+                  skip = True
                   continue
               
-              # 修复 bool 返回值
-              if 'volumedown_pressed_count' in line:
-                  new_lines.append('    return false;\n'); continue
-              if 'static bool check_argv' in line and 'return;' in line:
-                  new_lines.append(line.replace('return;', 'return false;')); continue
+              # 在跳过模式下，直到看到闭合的大括号才停止跳过
+              if skip:
+                  if line.strip() == '}':
+                      skip = False
+                  continue
               
+              # 修复 volumedown 变量未定义
+              if 'volumedown_pressed_count' in line:
+                  new_lines.append('    return false;\n')
+                  continue
+              
+              # 修复 bool 函数被误改为空 return 的情况
+              if 'static bool' in line and 'return;' in line:
+                  line = line.replace('return;', 'return false;')
+                  
               new_lines.append(line)
           
-          with open(path, 'w') as f: f.writelines(new_lines)
-          
-          # 清除碎裂宏定义干扰
-          content = open(path, 'r').read()
-          content = re.sub(r'#if.*?#else.*?#endif', '', content, flags=re.DOTALL)
-          open(path, 'w').write(content)
+          with open(path, 'w') as f:
+              f.writelines(new_lines)
           EOF
 
-      - name: 注入内核配置与稳定性修复
+      - name: 注入内核配置 (极致兼容版)
         working-directory: sm8550
         run: |
           CONF="arch/arm64/configs/vendor/kalama_GKI.config"
@@ -111,12 +106,11 @@ jobs:
             echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
             echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y"
             echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
-            echo "CONFIG_FRAME_WARN=8192" # 解决触摸屏堆栈报错
-            echo "CONFIG_WERROR=n"       # 忽略小警告
-            echo "CONFIG_LTO_NONE=y"      # 链接保命符
+            echo "CONFIG_FRAME_WARN=8192"
+            echo "CONFIG_WERROR=n"
+            echo "CONFIG_LTO_NONE=y"
             echo "CONFIG_STACKPROTECTOR=n"
             echo "CONFIG_STACKPROTECTOR_STRONG=n"
-            echo "CONFIG_KPM=y"
           } >> $CONF
           find . -name "abi_gki_protected_exports_*" -delete || true
 
@@ -128,14 +122,12 @@ jobs:
           make ARCH=arm64 O=out gki_defconfig vendor/kalama_GKI.config vendor/oplus/kalama_GKI.config
           make -j$(nproc) ARCH=arm64 O=out CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
 
-      - name: 打包 AnyKernel3 刷机包
+      - name: 打包刷机包
         run: |
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           RAW_IMAGE=$(find sm8550/out/arch/arm64/boot/ -name "Image" -type f | head -n 1)
-          curl -LO https://raw.githubusercontent.com/Numbersf/Action-Build/main/patches/patch_linux
-          chmod +x patch_linux && ./patch_linux "$RAW_IMAGE"
-          mv oImage ./AnyKernel3/Image
-          cd AnyKernel3 && zip -r9 "../Aston-SukiSU-SUSFS-$(date +%Y%m%d).zip" * -x .git README.md
+          cp "$RAW_IMAGE" ./AnyKernel3/Image
+          cd AnyKernel3 && zip -r9 "../Aston-Kernel-$(date +%Y%m%d).zip" * -x .git README.md
 
       - name: 上传成果
         uses: actions/upload-artifact@v4
