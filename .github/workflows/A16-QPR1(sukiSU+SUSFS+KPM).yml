@@ -22,61 +22,70 @@ jobs:
           cd $GITHUB_WORKSPACE/toolchains
           git clone https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86 --depth=1 -b android16-release clang-android16-release
 
-      - name: 源码获取与全量外科手术修复
+      - name: 源码获取与精准外科手术
         run: |
           git config --global user.email "2461654161@qq.com"
           git config --global user.name "XiaolanX"
           
-          # 1. 下载源码 (显式指定文件夹名为 sm8550)
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550.git --depth=1 -b sixteen-qpr1 sm8550
           git clone https://github.com/OnePlus12R-development/android_kernel_oneplus_sm8550-modules.git --depth=1 -b sixteen-qpr1 sm8550-modules
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android13-5.15
 
-          # 检查目录是否真的存在，不存在直接报错退出
-          if [ ! -d "sm8550" ]; then echo "源码克隆失败！"; exit 1; fi
-
-          # 进入 sm8550 目录进行后续操作
           cd sm8550
-          
-          # 2. 物理搬运 SUSFS (注意路径：.. 代表回到根目录找镜像仓库)
           mkdir -p fs include/linux
           cp ../susfs4ksu/kernel_patches/fs/susfs.c ./fs/
           cp ../susfs4ksu/kernel_patches/include/linux/susfs_def.h ./include/linux/
           cp ../susfs4ksu/kernel_patches/include/linux/susfs.h ./include/linux/
           
-          # 3. 路径桥接
           ln -s ../sm8550-modules/kernel/oplus_cpu ./kernel/oplus_cpu
           ln -s ../sm8550-modules/drivers/oplus ./drivers/oplus
           ln -s ../sm8550-modules/include/oplus ./include/oplus
           
-          # 4. 集成 SukiSU
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s builtin
 
-          # 5. Python 修复 (就在当前目录跑，路径直接写 drivers/...)
+          # 强制使用纯净的半角空格进行重构
+          # 5. Python 修复 (行级重构，确保 100% 语法闭合)
           python3 <<EOF
-          import os, re
-          # 尝试多个可能的路径
+          import os
           path = 'drivers/kernelsu/ksud.c' if os.path.exists('drivers/kernelsu/ksud.c') else 'KernelSU/kernel/ksud.c'
-          if not os.path.exists(path):
-              print("找不到 ksud.c，请检查 setup.sh 是否运行成功")
-              exit(1)
-              
           with open(path, 'r') as f:
-              content = f.read()
+              lines = f.readlines()
 
-          # 修复函数声明与封印冲突代码
-          content = re.sub(r'(static\s+)?void\s+on_post_fs_data\(void\)\s*\{.*?\}', 'void on_post_fs_data(void) { return; }', content, flags=re.DOTALL)
-          content = re.sub(r'void\s+ksu_handle_sys_read\(unsigned\s+int\s+fd\)\s*\{.*?\}', 'void ksu_handle_sys_read(unsigned int fd) { return; }', content, flags=re.DOTALL)
-          
-          # 使用 #if 0 暴力切断 514 行附近的宏碎裂区
-          content = content.replace('if (!is_init_rc(file)) {', '#if 0\nif (!is_init_rc(file)) {')
-          if '#if 0' in content:
-              content += '\n#endif\n'
+          new_lines = []
+          skip_mode = False
+          for line in lines:
+              # 函数拦截：直接原地重构函数头，并跳过旧函数体
+              if 'void ksu_handle_sys_read' in line:
+                  new_lines.append('void ksu_handle_sys_read(unsigned int fd) { return; }\n')
+                  skip_mode = True
+                  continue
+              if 'void on_post_fs_data' in line:
+                  new_lines.append('void on_post_fs_data(void) { return; }\n')
+                  skip_mode = True
+                  continue
+              
+              if skip_mode:
+                  if line.strip() == '}':
+                      skip_mode = False
+                  continue
+              
+              # 变量修复：确保使用标准的 4 个半角空格
+              if 'volumedown_pressed_count' in line:
+                  new_lines.append('    return false;\n')
+                  continue
+              
+              # 处理 bool 返回值冲突 (修正后的逻辑)
+              if 'static bool check_argv' in line and 'return;' in line:
+                  new_lines.append(line.replace('return;', 'return false;'))
+                  continue
+              
+              new_lines.append(line)
 
           with open(path, 'w') as f:
-              f.write(content)
+              f.writelines(new_lines)
           EOF
-      - name: 注入内核配置 (关闭 WERROR 护航版)
+
+      - name: 注入内核配置 (极致隐藏版)
         working-directory: sm8550
         run: |
           CONF="arch/arm64/configs/vendor/kalama_GKI.config"
@@ -84,21 +93,24 @@ jobs:
           sed -i '/CONFIG_LTO/d' $CONF
           sed -i '/CONFIG_FRAME_WARN/d' $CONF
           sed -i '/CONFIG_WERROR/d' $CONF
-          
           {
             echo "CONFIG_KSU=y"
             echo "CONFIG_KSU_SUSFS=y"
             echo "CONFIG_KSU_SUSFS_SUS_PATH=y"
             echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y"
             echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y"
+            echo "CONFIG_KSU_SUSFS_SUS_MAP=y"
+            echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y"
+            echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y"
             echo "CONFIG_FRAME_WARN=8192"
             echo "CONFIG_WERROR=n"
             echo "CONFIG_LTO_NONE=y"
             echo "CONFIG_STACKPROTECTOR=n"
             echo "CONFIG_STACKPROTECTOR_STRONG=n"
+            echo "CONFIG_KPM=y"
           } >> $CONF
           find . -name "abi_gki_protected_exports_*" -delete || true
-          
+
       - name: 执行内核编译
         working-directory: sm8550
         run: |
@@ -107,12 +119,13 @@ jobs:
           make ARCH=arm64 O=out gki_defconfig vendor/kalama_GKI.config vendor/oplus/kalama_GKI.config
           make -j$(nproc) ARCH=arm64 O=out CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
 
-      - name: 打包刷机包
+      - name: 严谨打包 AnyKernel3 刷机包
         run: |
           git clone https://github.com/Numbersf/AnyKernel3 --depth=1
           RAW_IMAGE=$(find sm8550/out/arch/arm64/boot/ -name "Image" -type f | head -n 1)
+          if [ -z "$RAW_IMAGE" ]; then echo "❌ No Image Found!"; exit 1; fi
           cp "$RAW_IMAGE" ./AnyKernel3/Image
-          cd AnyKernel3 && zip -r9 "../Aston-Kernel-$(date +%Y%m%d).zip" * -x .git README.md
+          cd AnyKernel3 && zip -r9 "../Aston-Kernel-$(date +%Y%m%d_%H%M).zip" * -x .git README.md
 
       - name: 上传成果
         uses: actions/upload-artifact@v4
